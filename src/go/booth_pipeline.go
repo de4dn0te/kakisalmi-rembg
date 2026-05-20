@@ -59,8 +59,8 @@ const (
 	vignetteAngle = "PI/4"
 
 	defaultExhibit = "Stories from the Community"
-	fontBold       = `../lib/fonts/DejaVuSans-Bold.ttf`
-	fontRegular    = `../lib/fonts/DejaVuSans.ttf`
+	fontBold       = `../../lib/fonts/DejaVuSans-Bold.ttf`
+	fontRegular    = `../../lib/fonts/DejaVuSans.ttf`
 )
 
 // videoExtensions that trigger the watch pipeline
