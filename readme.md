@@ -29,3 +29,4 @@ Minkälainen palvelin museolla on käytössä tällä hetkellä? Voidaanko sitä
 ### Notes
 
 Nykyinen koodi käyttää hard-coded polkuja koulukoneelta
+Koulun systeemin takia myös riippuvuudet ovat local
