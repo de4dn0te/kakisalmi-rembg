@@ -1,0 +1,6 @@
+[submodule "lib/sys"]
+	path = lib/sys
+	url = https://go.googlesource.com/sys
+[submodule "lib/fsnotify"]
+	path = lib/fsnotify
+	url = https://github.com/fsnotify/fsnotify.git
