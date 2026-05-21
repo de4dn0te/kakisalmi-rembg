@@ -8,7 +8,7 @@ the pipeline logic is readable Python rather than FFmpeg filter strings.
 
 Install
 -------
-  pip install moviepy pillow numpy watchdog
+  pip install moviepy pillow numpy watchdog python-dotenv
 
   MoviePy wraps FFmpeg under the hood for encoding; FFmpeg must be on PATH.
   Unlike the pure-FFmpeg version, there is no ImageMagick dependency —
@@ -29,16 +29,11 @@ import tempfile
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
 import numpy as np
+from moviepy import ColorClip, CompositeVideoClip, ImageClip, VideoFileClip
 from PIL import Image, ImageDraw, ImageFont
-
-try:
-    # MoviePy v1.x
-    from moviepy.editor import ColorClip, CompositeVideoClip, ImageClip, VideoFileClip
-except ModuleNotFoundError:
-    # MoviePy v2.x (removed .editor submodule)
-    from moviepy import ColorClip, CompositeVideoClip, ImageClip, VideoFileClip
 
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -65,12 +60,11 @@ EXHIBIT_NAME   = "Stories from the Community"
 FONT_PATH_BOLD    = "../../lib/fonts/DejaVuSans-Bold.ttf"
 FONT_PATH_REGULAR = "../../lib/fonts/DejaVuSans.ttf"
 
-FFMPEG_BIN  = r"C:\Users\x119877\ffmpeg\bin\ffmpeg.exe"
-FFPROBE_BIN = r"C:\Users\x119877\ffmpeg\bin\ffprobe.exe"
+env_path = Path(__file__).parent / ".." / ".." / ".env"
+load_dotenv(env_path)
 
-# Tell MoviePy where ffmpeg lives (needed when ffmpeg is not on PATH)
-os.environ["FFMPEG_BINARY"]  = FFMPEG_BIN
-os.environ["FFPROBE_BINARY"] = FFPROBE_BIN
+ffmpeg  = os.getenv("FFMPEG_PATH", "ffmpeg")
+ffprobe = os.getenv("FFPROBE_PATH", "ffprobe")
 
 
 # ── Font loader ────────────────────────────────────────────────────────────────
@@ -332,7 +326,7 @@ def archive_copy(display_path: Path, archive_path: Path) -> None:
     """Transcode the display MP4 to a lossless ProRes HQ archive."""
     print("\n[4/5] Writing archive copy (ProRes HQ)...")
     subprocess.run([
-        FFMPEG_BIN, "-y",
+        ffmpeg, "-y",
         "-i",    str(display_path),
         "-c:v",  "prores_ks", "-profile:v", "3",
         "-c:a",  "pcm_s16le",
