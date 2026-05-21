@@ -39,6 +39,7 @@ import (
 // ── Configuration ──────────────────────────────────────────────────────────────
 
 const (
+
 	frameInterval = 5   // Extract one key frame every N seconds
 	panelWidth    = 320 // Each filmstrip panel width in px
 	panelHeight   = 240 // Each filmstrip panel height in px
@@ -56,8 +57,9 @@ const (
 	vignetteAngle = "PI/4"
 
 	defaultExhibit = "Stories from the Community"
-	fontBold       = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-	fontRegular    = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+	fontBold       = `../../lib/fonts/DejaVuSans-Bold.ttf`
+	fontRegular    = `../../lib/fonts/DejaVuSans.ttf`
+
 )
 
 // videoExtensions that trigger the watch pipeline
@@ -77,6 +79,18 @@ type Metadata struct {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+// find ffmpeg and ffprobe
+func loadEnv() {
+	ffmpeg := os.Getenv("FFMPEG_PATH")
+	if ffmpeg == "" {
+		ffmpeg = "ffmpeg"
+	}
+	ffprobe := os.Getenv("FFPROBE_PATH")
+	if ffprobe == "" {
+		ffprobe = "ffprobe"
+	}
+}
 
 // run executes a command, streaming its stderr to our log. Fatal on error.
 func run(label string, name string, args ...string) {
@@ -99,7 +113,7 @@ func run(label string, name string, args ...string) {
 // probeFormat returns the "format" section from ffprobe as a map.
 func probeFormat(path string) map[string]interface{} {
 	out, err := exec.Command(
-		"ffprobe", "-v", "quiet", "-print_format", "json",
+		ffprobe, "-v", "quiet", "-print_format", "json",
 		"-show_format", "-show_streams", path,
 	).Output()
 	if err != nil {
@@ -167,7 +181,7 @@ func extractFrames(inputPath, framesDir string) []string {
 		panelWidth, panelHeight,
 		panelWidth, panelHeight,
 	)
-	run("", "ffmpeg", "-y", "-i", inputPath,
+	run("", ffmpeg, "-y", "-i", inputPath,
 		"-vf", vf, "-q:v", "2",
 		filepath.Join(framesDir, "frame_%04d.jpg"),
 	)
@@ -245,7 +259,7 @@ func buildFilmstrip(frames []string, tmpDir string) (stripPath string, stripW, s
 		stripPath,
 	)
 
-	run("Stitching panels with hstack…", "ffmpeg", args...)
+	run("Stitching panels with hstack…", ffmpeg, args...)
 	return stripPath, stripW, stripH
 }
 
@@ -309,7 +323,7 @@ func composite(
 	}, ";")
 
 	run("Rendering composite (this may take a while)…",
-		"ffmpeg", "-y",
+		ffmpeg, "-y",
 		"-i", inputPath,
 		"-i", stripPath,
 		"-filter_complex", filterComplex,
@@ -328,7 +342,7 @@ func composite(
 func archiveCopy(displayPath, archivePath string) {
 	log.Println("\n[4/5] Writing archive copy (ProRes HQ)...")
 	run("",
-		"ffmpeg", "-y",
+		ffmpeg, "-y",
 		"-i", displayPath,
 		"-c:v", "prores_ks", "-profile:v", "3",
 		"-c:a", "pcm_s16le",
@@ -466,6 +480,13 @@ func watch(watchDir, outputDir, defaultTitle string) {
 
 func main() {
 	log.SetFlags(0) // cleaner output without timestamps
+
+	exe, _ := os.Executable()
+	envPath := filepath.Join(filepath.Dir(exe), "..", "..", ".env")
+	if err := godotenv.Load(envPath); err != nil {
+    log.Fatal("Error loading .env file")
+	}	
+	loadEnv()
 
 	processCmd := flag.NewFlagSet("process", flag.ExitOnError)
 	pTitle     := processCmd.String("title",   defaultExhibit, "Exhibit name")
