@@ -22,8 +22,8 @@ Muuttujat kielen ja kirjaston valitsemiseen on seuraavat: kuinka paljon kokemust
 
 * Enimmäkseen mielenkiinnosta mukana, voi olla yhtä hyvä vaihtoehto kuin Rust.
 
-    GOOS=linux GOARCH=amd64 go build -o booth_linux booth_pipeline.go
-	go build -o build/booth_win.exe booth_pipeline.go
+    `GOOS=linux GOARCH=amd64 go build -o booth_linux booth_pipeline.go` <br>
+	`go build -o build/booth_win.exe booth_pipeline.go`
 
 ### Python with MoviePy
 
