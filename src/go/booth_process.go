@@ -486,7 +486,6 @@ func main() {
 	if err := godotenv.Load(envPath); err != nil {
     log.Fatal("Error loading .env file")
 	}	
-	godotenv.Load(envPath)
 	loadEnv()
 
 	processCmd := flag.NewFlagSet("process", flag.ExitOnError)
