@@ -39,4 +39,5 @@ Minkälainen palvelin museolla on käytössä tällä hetkellä? Voidaanko sitä
 
 ### Notes
 
-Nykyinen koodi käyttää hard-coded polkuja koulukoneelta ([41a9eb843c](https://git.shambali.org/de4dn0te/kakisalmi/commit/41a9eb843c7435882ad41a606773f6e8083a8534))
+Nykyinen koodi käyttää hard-coded polkuja koulukoneelta
+Koulun systeemin takia myös riippuvuudet ovat local
