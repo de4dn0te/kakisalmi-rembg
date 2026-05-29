@@ -11,7 +11,7 @@ from rembg import new_session
 # Parse args
 parser = argparse.ArgumentParser(description='Applies rembg to the frames of a video')
 parser.add_argument('input', type=str, help='Input video')
-parser.add_argument('-o', type=str, default="export/output.webm", help="Define output path")
+parser.add_argument('-o', type=str, default="export/output.mov", help="Define output path")
 parser.add_argument('-a', action="store_true", help="Turns on alpha matting during background removal")
 parser.add_argument('-af', type=int, default=240, help="Alpha matting foreground threshold")
 parser.add_argument('-ab', type=int, default=10, help="Alpha matting background threshold")
@@ -92,8 +92,8 @@ try:
     output_file = pathlib.Path(args.o)
     output_file.parent.mkdir(exist_ok=True, parents=True)
 
-    stream = ffmpeg.input(os.path.join(processed_dir, "%04d.png"), r=framerate, f='image2', s=whstr, pix_fmt='yuva420p')
-    stream = ffmpeg.output(stream, args.o, vcodec='libvpx-vp9', crf=25)
+    stream = ffmpeg.input(os.path.join(processed_dir, "%04d.png"), r=framerate, f='image2', s=whstr, pix_fmt='yuva444p10le')
+    stream = ffmpeg.output(stream, args.o, vcodec='prores_ks', **{'profile:v': '4', 'bits_per_mb': '5000'})
     ffmpeg.run(stream)
 
 except KeyboardInterrupt:
