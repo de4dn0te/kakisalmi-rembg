@@ -1,3 +1,5 @@
-/build/**
-/lib/yt-dlp
-/testfootage/
+.venv
+/processed
+/frames
+/export
+*.mp4
