@@ -1,43 +1,32 @@
-# Käkisalmi protoyyppi
+# rembg_from_video
 
-<hr>
+Uses [ffmpeg-python](https://github.com/kkroening/ffmpeg-python) and [rembg](https://github.com/danielgatis/rembg) to attempt removal of a background from a video file.
 
-## Yleiset Ideat
+Two directories will be created in the same directory as the script to hold the video frames (before and after rembg is applied).
 
-Jos toteutukseen halutaan ulkoasun puolelta vain taustanpoisto ja henkilön asetus toisen taustan päälle ja *ehkä* esim. tausta vaihtuu välillä tai vierii yms., tämän voi varmaankin hyvin toteuttaa suoraan pelkästään ffmpeg:llä tai muulla samanlaisella. Jos halutaan paljon monimutkaisempia efektejä, voidaan siirtyä täysin takaisin AE (After Effects) pipelinen pariin. Tämän osion toteutus ffmpeg:llä ei tietenkään tarkoita, etteikö kumpaakin pipelinea voisi käyttää.
+### Installation:
+[Install rembg by following their instructions](https://github.com/danielgatis/rembg)
 
-<hr>
+rembg specifically requires Python 3.9 as of the time of this writing. Note that you must choose the `rembg[gpu]` version and configure onnxruntime accordingly if you wish to use your GPU for the image processing.
 
-## Video Pipeline Implementation
+Then:
+```
+pip install ffmpeg-python
+```
+### Usage:
+```
+python .\rembg_video.py [-h] [-a] [-af AF] [-ab AB] [-ae AE] [--skip-extract] [--skip-process] input
 
-> *Tämänhetkiset prototyypit vain suuntaa antavat. Älä kiitos käytä prod ympäristössä. Kaikki versiot sisältävät runsaasti AI:n käsityötä, joten - kuten viittasin - en suosittele oikeaan implementatioon.*
+positional arguments:
+  input           Input video
 
-Muuttujat kielen ja kirjaston valitsemiseen on seuraavat: kuinka paljon kokemusta tekijöillä on kieleen, onko kirjasto helppokäyttöinen/riittävän ominaisuusrikas, ja kuinka suorituskykyinen ohjelman halutaan olevan.
-
-### Rust with FFmpeg
-
-* Teknisesti monimutkaisempi implementaatio kuin Python MoviePy:lla, mutta paljon suorituskyvykkäämpi.
-
-### Go with FFmpeg
-
-* Enimmäkseen mielenkiinnosta mukana, voi olla yhtä hyvä vaihtoehto kuin Rust.
-
-    `GOOS=linux GOARCH=amd64 go build -o booth_linux booth_pipeline.go` <br>
-	`go build -o build/booth_win.exe booth_pipeline.go`
-
-### Python with MoviePy
-
-* Helpompi muokata ( jos vain osaisi pythonia ;) ), mutta varmaankin hitain kaikista, paitsi ehkä Adobe AE pipeline.
-
-## Big Picture- päätökset
-
-Aiotaanko kuvauspisteeseen tehdä minkäänlaista valmistusta e.g. vihreä seinä, valaistus yms? Tarvitaanko AI taustanpoistoa, vai voidaanko hyödyntää oikeita työkaluja, kuten CorridorKey?
-
-Onko tilaajalla jonkinlainen kuva tarkalleen minkälaista toteutusta haluavat? Onko esim. vierivä kuvatausta hyvä?
-
-Minkälainen palvelin museolla on käytössä tällä hetkellä? Voidaanko sitä hyödyntää, vai hankitaanko paikan päälle kone tätä varten? Jos palvelinta voidaan hyödyntää, onko siinä riittävästi resursseja videon käsittelyyn?
-
-### Notes
-
-Nykyinen koodi käyttää hard-coded polkuja koulukoneelta
-Koulun systeemin takia myös riippuvuudet ovat local
+optional arguments:
+  -h, --help      show this help message and exit
+  -a              Turns on alpha matting during background removal
+  -af AF          Alpha matting foreground threshold
+  -ab AB          Alpha matting background threshold
+  -ae AE          Alpha matting erode size
+  --skip-extract  Skips ffmpeg frame extraction
+  --skip-process  Skips rembg frame processing
+  ```
+  Tip: [Alpha matting can be used to refine the results](https://github.com/danielgatis/rembg#advance-usage)
