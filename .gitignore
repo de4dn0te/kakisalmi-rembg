@@ -6,3 +6,4 @@
 *.webm
 *.mov
 *.mkv
+__pycache__
