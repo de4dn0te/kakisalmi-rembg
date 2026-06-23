@@ -2,13 +2,12 @@ import argparse
 import os
 import ffmpeg
 import pathlib
-import queue
-import shutil
 import threading
 import numpy as np
+from queue import Queue
+from shutil import rmtree
 from PIL import Image
-from rembg.bg import remove
-from rembg import new_session
+from rembg import new_session, remove
 
 os.environ.setdefault(
     "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,managed_memory:True"
@@ -25,14 +24,14 @@ parser.add_argument(
 parser.add_argument(
     "--model",
     type=str,
-    default="birefnet-general-lite",
+    default="u2net-human-seg",
     help="rembg model to use (default: birefnet-general-lite)",
 )
 parser.add_argument(
     "--workers",
     type=int,
-    default=4,
-    help="Number of concurrent processing workers (default: 4)",
+    default=1,
+    help="Number of concurrent processing workers (default: 1)",
 )
 parser.add_argument(
     "--smooth",
@@ -53,12 +52,6 @@ parser.add_argument(
     help="Number of processed frames to buffer before writing (default: 8)",
 )
 parser.add_argument(
-    "--skip-extract", action="store_true", help="Skips ffmpeg frame extraction"
-)
-parser.add_argument(
-    "--skip-process", action="store_true", help="Skips rembg frame processing"
-)
-parser.add_argument(
     "--skip-smooth", action="store_true", help="Skips temporal mask smoothing"
 )
 args = parser.parse_args()
@@ -77,100 +70,98 @@ frames_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "frames
 processed_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "processed")
 
 # Extract input video frames
-if not args.skip_extract:
-    if not os.path.isdir(frames_dir):
-        os.mkdir(frames_dir)
-    stream = ffmpeg.input(args.input)
-    stream = ffmpeg.output(stream, os.path.join(frames_dir, "%04d.png"))
-    ffmpeg.run(stream)
+if not os.path.isdir(frames_dir):
+    os.mkdir(frames_dir)
+stream = ffmpeg.input(args.input)
+stream = ffmpeg.output(stream, os.path.join(frames_dir, "%04d.png"))
+ffmpeg.run(stream)
 
 _SENTINEL = object()
 
 try:
     # Process frames with pipelined reader -> processors -> writer
-    if not args.skip_process:
-        if not os.path.isdir(processed_dir):
-            os.mkdir(processed_dir)
+    if not os.path.isdir(processed_dir):
+        os.mkdir(processed_dir)
 
-        files = sorted(os.listdir(frames_dir))
-        total_files = len(files)
+    files = sorted(os.listdir(frames_dir))
+    total_files = len(files)
 
-        print(f"Loading rembg session (model={args.model})...", flush=True)
-        session = new_session(args.model)
+    print(f"Loading rembg session (model={args.model})...", flush=True)
+    session = new_session(args.model, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
 
-        read_queue = queue.Queue(maxsize=args.read_ahead)
-        write_queue = queue.Queue(maxsize=args.write_buffer)
-        errors = []
-        active_processors = [
-            args.workers
-        ]  # list so processor() can mutate without nonlocal
-        active_processors_lock = threading.Lock()
+    read_queue = Queue(maxsize=args.read_ahead)
+    write_queue = Queue(maxsize=args.write_buffer)
+    errors = []
+    active_processors = [
+        args.workers
+    ]  # list so processor() can mutate without nonlocal
+    active_processors_lock = threading.Lock()
 
-        def reader():
-            try:
-                for idx, file in enumerate(files, 1):
-                    with open(os.path.join(frames_dir, file), "rb") as f:
-                        data = f.read()
-                    read_queue.put((idx, file, data))
-            except Exception as e:
-                errors.append(e)
-            finally:
-                # One sentinel per worker so each one knows when to stop
-                for _ in range(args.workers):
-                    read_queue.put(_SENTINEL)
+    def reader():
+        try:
+            for idx, file in enumerate(files, 1):
+                with open(os.path.join(frames_dir, file), "rb") as f:
+                    data = f.read()
+                read_queue.put((idx, file, data))
+        except Exception as e:
+            errors.append(e)
+        finally:
+            # One sentinel per worker so each one knows when to stop
+            for _ in range(args.workers):
+                read_queue.put(_SENTINEL)
 
-        def processor():
-            try:
-                while True:
-                    item = read_queue.get()
-                    if item is _SENTINEL:
-                        break
-                    idx, file, input_data = item
-                    print(f"Processing frame {idx}/{total_files}: {file}", flush=True)
-                    output_data = remove(input_data, session=session)
-                    write_queue.put((idx, file, output_data))
-            except Exception as e:
-                errors.append(e)
-            finally:
-                # Signal writer only when the last processor finishes
-                with active_processors_lock:
-                    active_processors[0] -= 1
-                    if active_processors[0] == 0:
-                        write_queue.put(_SENTINEL)
+    def processor():
+        try:
+            while True:
+                item = read_queue.get()
+                if item is _SENTINEL:
+                    break
+                idx, file, input_data = item
+                print(f"Processing frame {idx}/{total_files}: {file}", flush=True)
+                output_data = remove(input_data, session=session)
+                write_queue.put((idx, file, output_data))
+        except Exception as e:
+            errors.append(e)
+        finally:
+            # Signal writer only when the last processor finishes
+            with active_processors_lock:
+                active_processors[0] -= 1
+                if active_processors[0] == 0:
+                    write_queue.put(_SENTINEL)
 
-        def writer():
-            try:
-                while True:
-                    item = write_queue.get()
-                    if item is _SENTINEL:
-                        break
-                    idx, file, output_data = item
-                    with open(os.path.join(processed_dir, file), "wb") as f:
-                        f.write(output_data)
-                    print(f"Written frame {idx}/{total_files}: {file}", flush=True)
-            except Exception as e:
-                errors.append(e)
+    def writer():
+        try:
+            while True:
+                item = write_queue.get()
+                if item is _SENTINEL:
+                    break
+                idx, file, output_data = item
+                with open(os.path.join(processed_dir, file), "wb") as f:
+                    f.write(output_data)
+                print(f"Written frame {idx}/{total_files}: {file}", flush=True)
+        except Exception as e:
+            errors.append(e)
 
-        reader_thread = threading.Thread(target=reader, daemon=True)
-        processor_threads = [
-            threading.Thread(target=processor, daemon=True) for _ in range(args.workers)
-        ]
-        writer_thread = threading.Thread(target=writer, daemon=True)
+    reader_thread = threading.Thread(target=reader, daemon=True)
+    processor_threads = [
+        threading.Thread(target=processor, daemon=True) for _ in range(args.workers)
+    ]
+    writer_thread = threading.Thread(target=writer, daemon=True)
 
-        reader_thread.start()
-        for t in processor_threads:
-            t.start()
-        writer_thread.start()
+    reader_thread.start()
+    for t in processor_threads:
+        t.start()
+    writer_thread.start()
 
-        reader_thread.join()
-        for t in processor_threads:
-            t.join()
-        writer_thread.join()
+    reader_thread.join()
+    for t in processor_threads:
+        t.join()
+    writer_thread.join()
 
-        if errors:
-            raise errors[0]
+    if errors:
+        raise errors[0]
 
-    # Temporal mask smoothing — streaming sliding window, only `window` frames in RAM at once
+    # Temporal mask smoothing
     if not args.skip_smooth and args.smooth > 0:
         files = sorted(os.listdir(processed_dir))
         total = len(files)
@@ -181,13 +172,11 @@ try:
         buf = {}  # read_idx -> (filename, np.ndarray RGBA)
 
         for read_idx in range(total + half):
-            # Load next frame into buffer
             if read_idx < total:
                 file = files[read_idx]
                 img = Image.open(os.path.join(processed_dir, file)).convert("RGBA")
                 buf[read_idx] = (file, np.array(img))
 
-            # The frame we can now finalize (has full right-side context)
             write_idx = read_idx - half
             if 0 <= write_idx < total:
                 start = max(0, write_idx - half)
@@ -205,7 +194,6 @@ try:
                 Image.fromarray(out_arr).save(os.path.join(processed_dir, filename))
                 print(f"Smoothed frame {write_idx + 1}/{total}: {filename}", flush=True)
 
-                # Drop the frame that's no longer needed by any future window
                 drop_idx = write_idx - half
                 if drop_idx in buf:
                     del buf[drop_idx]
@@ -231,5 +219,5 @@ except KeyboardInterrupt:
 
 finally:
     print("Removing temporary files...")
-    shutil.rmtree(processed_dir, ignore_errors=True)
-    shutil.rmtree(frames_dir, ignore_errors=True)
+    rmtree(processed_dir, ignore_errors=True)
+    rmtree(frames_dir, ignore_errors=True)
