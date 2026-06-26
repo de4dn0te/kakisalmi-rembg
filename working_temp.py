@@ -31,8 +31,8 @@ parser.add_argument(
 parser.add_argument(
     "--workers",
     type=int,
-    default=os.cpu_count() or 4,
-    help="Number of concurrent processing workers (default: cpu_count)",
+    default=1,
+    help="Number of concurrent processing workers (default: 1)",
 )
 parser.add_argument(
     "--smooth",
@@ -51,12 +51,6 @@ parser.add_argument(
     type=int,
     default=8,
     help="Number of processed frames to buffer before writing (default: 8)",
-)
-parser.add_argument(
-    "--smooth-workers",
-    type=int,
-    default=os.cpu_count() or 4,
-    help="Number of threads to use for temporal mask smoothing (default: cpu count)",
 )
 args = parser.parse_args()
 
@@ -263,82 +257,34 @@ try:
         total = len(files)
         window = args.smooth
         half = window // 2
-        print(
-            f"Applying temporal mask smoothing (window={window}, "
-            f"workers={args.smooth_workers})...",
-            flush=True,
-        )
+        print(f"Applying temporal mask smoothing (window={window})...", flush=True)
 
-        smoothing_errors = []
-        progress_lock = threading.Lock()
-        progress_count = [0]
+        alpha_buf = {}
 
-        # Cache decoded alpha channels so overlapping windows don't re-decode
-        # the same PNG repeatedly.
-        alpha_cache = {}
-        alpha_cache_lock = threading.Lock()
+        for read_idx in range(total + half):
+            if read_idx < total:
+                file = files[read_idx]
+                img = Image.open(os.path.join(processed_dir, file)).convert("RGBA")
+                alpha_buf[read_idx] = (file, np.array(img)[:, :, 3].astype(np.float32))
 
-        def get_alpha(idx):
-            with alpha_cache_lock:
-                cached = alpha_cache.get(idx)
-            if cached is not None:
-                return cached
-            file = files[idx]
-            img = Image.open(os.path.join(processed_dir, file)).convert("RGBA")
-            alpha = np.array(img)[:, :, 3].astype(np.float32)
-            with alpha_cache_lock:
-                alpha_cache[idx] = alpha
-            return alpha
-
-        def smooth_frame(write_idx):
-            try:
+            write_idx = read_idx - half
+            if 0 <= write_idx < total:
                 start = max(0, write_idx - half)
                 end = min(total - 1, write_idx + half)
-                alphas = np.stack([get_alpha(j) for j in range(start, end + 1)])
+                alphas = np.stack([alpha_buf[j][1] for j in range(start, end + 1)])
                 smoothed_alpha = np.mean(alphas, axis=0).astype(np.uint8)
-
-                filename = files[write_idx]
+                filename = alpha_buf[write_idx][0]
                 out_img = Image.open(os.path.join(processed_dir, filename)).convert(
                     "RGBA"
                 )
                 out_arr = np.array(out_img)
                 out_arr[:, :, 3] = smoothed_alpha
                 Image.fromarray(out_arr).save(os.path.join(processed_dir, filename))
+                print(f"Smoothed frame {write_idx + 1}/{total}: {filename}", flush=True)
 
-                with progress_lock:
-                    progress_count[0] += 1
-                    print(
-                        f"Smoothed frame {progress_count[0]}/{total}: {filename}",
-                        flush=True,
-                    )
-            except Exception as e:
-                smoothing_errors.append(e)
-
-        smooth_queue = Queue()
-        for write_idx in range(total):
-            smooth_queue.put(write_idx)
-
-        def smoothing_worker():
-            while True:
-                try:
-                    write_idx = smooth_queue.get_nowait()
-                except Exception:
-                    return
-                if smoothing_errors:
-                    return
-                smooth_frame(write_idx)
-
-        smoothing_threads = [
-            threading.Thread(target=smoothing_worker, daemon=True)
-            for _ in range(max(1, args.smooth_workers))
-        ]
-        for t in smoothing_threads:
-            t.start()
-        for t in smoothing_threads:
-            t.join()
-
-        if smoothing_errors:
-            raise smoothing_errors[0]
+                drop_idx = write_idx - half
+                if drop_idx in alpha_buf:
+                    del alpha_buf[drop_idx]
 
     # Output video
     output_file = pathlib.Path(args.o)
