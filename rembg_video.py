@@ -31,8 +31,8 @@ parser.add_argument(
 parser.add_argument(
     "--workers",
     type=int,
-    default=os.cpu_count() or 4,
-    help="Number of concurrent processing workers (default: cpu_count)",
+    default=1,
+    help="Number of concurrent processing workers (default: 1)",
 )
 parser.add_argument(
     "--smooth",
@@ -56,7 +56,7 @@ parser.add_argument(
     "--smooth-workers",
     type=int,
     default=os.cpu_count() or 4,
-    help="Number of threads to use for temporal mask smoothing (default: cpu count)",
+    help="Number of cpu threads to use for temporal mask smoothing (default: cpu count)",
 )
 args = parser.parse_args()
 
@@ -81,7 +81,7 @@ def image_to_png_bytes(image):
         return buffer.getvalue()
 
 
-def remove_with_mask_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
+def remove_with_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
     original = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     width, height = original.size
     last_exc = None
@@ -164,8 +164,8 @@ frames_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "frames
 processed_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "processed")
 
 # Extract input video frames
-if not os.path.isdir(frames_dir):
-    os.mkdir(frames_dir)
+rmtree(frames_dir, ignore_errors=True)
+os.mkdir(frames_dir)
 stream = ffmpeg.input(args.input)
 stream = ffmpeg.output(stream, os.path.join(frames_dir, "%04d.bmp"))
 ffmpeg.run(stream)
@@ -196,9 +196,11 @@ try:
     def reader():
         try:
             for idx, file in enumerate(files, 1):
-                with open(os.path.join(frames_dir, file), "rb") as f:
+                frame_path = os.path.join(frames_dir, file)
+                with open(frame_path, "rb") as f:
                     data = f.read()
                 read_queue.put((idx, file, data))
+                os.remove(frame_path)
         except Exception as e:
             errors.append(e)
         finally:
@@ -214,7 +216,7 @@ try:
                     break
                 idx, file, input_data = item
                 print(f"Processing frame {idx}/{total_files}: {file}", flush=True)
-                output_data = remove_with_mask_fallback(input_data, session=session)
+                output_data = remove_with_fallback(input_data, session=session)
                 write_queue.put((idx, file, output_data))
         except Exception as e:
             errors.append(e)
@@ -272,23 +274,21 @@ try:
         smoothing_errors = []
         progress_lock = threading.Lock()
         progress_count = [0]
+        n_workers = max(1, args.smooth_workers)
 
-        # Cache decoded alpha channels so overlapping windows don't re-decode
-        # the same PNG repeatedly.
-        alpha_cache = {}
-        alpha_cache_lock = threading.Lock()
+        # Write smoothed frames to a separate directory rather than
+        # overwriting processed_dir in place. Overlapping windows mean a
+        # frame can be a *read* dependency for several write_idx tasks;
+        # writing in place risked one thread reading a file while another
+        # was mid-save on it (truncated/corrupt PNG -> shape errors).
+        smoothed_dir = processed_dir + "_smoothed"
+        if not os.path.isdir(smoothed_dir):
+            os.mkdir(smoothed_dir)
 
         def get_alpha(idx):
-            with alpha_cache_lock:
-                cached = alpha_cache.get(idx)
-            if cached is not None:
-                return cached
             file = files[idx]
             img = Image.open(os.path.join(processed_dir, file)).convert("RGBA")
-            alpha = np.array(img)[:, :, 3].astype(np.float32)
-            with alpha_cache_lock:
-                alpha_cache[idx] = alpha
-            return alpha
+            return np.array(img)[:, :, 3].astype(np.float32)
 
         def smooth_frame(write_idx):
             try:
@@ -303,7 +303,7 @@ try:
                 )
                 out_arr = np.array(out_img)
                 out_arr[:, :, 3] = smoothed_alpha
-                Image.fromarray(out_arr).save(os.path.join(processed_dir, filename))
+                Image.fromarray(out_arr).save(os.path.join(smoothed_dir, filename))
 
                 with progress_lock:
                     progress_count[0] += 1
@@ -330,7 +330,7 @@ try:
 
         smoothing_threads = [
             threading.Thread(target=smoothing_worker, daemon=True)
-            for _ in range(max(1, args.smooth_workers))
+            for _ in range(n_workers)
         ]
         for t in smoothing_threads:
             t.start()
@@ -338,7 +338,12 @@ try:
             t.join()
 
         if smoothing_errors:
+            rmtree(smoothed_dir, ignore_errors=True)
             raise smoothing_errors[0]
+
+        # Swap the smoothed frames in as the new processed_dir contents.
+        rmtree(processed_dir)
+        os.rename(smoothed_dir, processed_dir)
 
     # Output video
     output_file = pathlib.Path(args.o)
