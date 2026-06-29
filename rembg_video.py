@@ -26,7 +26,7 @@ parser.add_argument(
     "--model",
     type=str,
     default="u2net_human_seg",
-    help="rembg model to use (default: birefnet-general-lite)",
+    help="rembg model to use (default: u2net_human_seg)",
 )
 parser.add_argument(
     "--workers",
@@ -71,7 +71,7 @@ def is_oom_error(exc):
 
 def image_to_bytes(image):
     with io.BytesIO() as buffer:
-        image.save(buffer, format="BMP")
+        image.save(buffer, format="TIFF")
         return buffer.getvalue()
 
 
@@ -93,7 +93,7 @@ def remove_with_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
                 Image.Resampling.LANCZOS,
             )
             with io.BytesIO() as buffer:
-                resized.save(buffer, format="BMP")
+                resized.save(buffer, format="TIFF")
                 scaled_bytes = buffer.getvalue()
 
             scaled_output = remove(scaled_bytes, session=session)
@@ -101,11 +101,11 @@ def remove_with_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
                 scaled_output_bytes = bytes(scaled_output)
             elif isinstance(scaled_output, np.ndarray):
                 with io.BytesIO() as buffer:
-                    Image.fromarray(scaled_output).save(buffer, format="BMP")
+                    Image.fromarray(scaled_output).save(buffer, format="TIFF")
                     scaled_output_bytes = buffer.getvalue()
             elif isinstance(scaled_output, Image.Image):
                 with io.BytesIO() as buffer:
-                    scaled_output.save(buffer, format="BMP")
+                    scaled_output.save(buffer, format="TIFF")
                     scaled_output_bytes = buffer.getvalue()
             else:
                 raise RuntimeError(
@@ -156,12 +156,13 @@ framerate = video_stream["avg_frame_rate"]
 
 frames_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "frames")
 processed_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "processed")
+smoothed_dir = processed_dir + "_smoothed"
 
 # Extract input video frames
 rmtree(frames_dir, ignore_errors=True)
 os.mkdir(frames_dir)
 stream = ffmpeg.input(args.input)
-stream = ffmpeg.output(stream, os.path.join(frames_dir, "%04d.bmp"))
+stream = ffmpeg.output(stream, os.path.join(frames_dir, "%04d.tiff"))
 ffmpeg.run(stream)
 
 _SENTINEL = object()
@@ -274,8 +275,7 @@ try:
         # overwriting processed_dir in place. Overlapping windows mean a
         # frame can be a *read* dependency for several write_idx tasks;
         # writing in place risked one thread reading a file while another
-        # was mid-save on it (truncated/corrupt BMP -> shape errors).
-        smoothed_dir = processed_dir + "_smoothed"
+        # was mid-save on it (truncated/corrupt img -> shape errors).
         if not os.path.isdir(smoothed_dir):
             os.mkdir(smoothed_dir)
 
@@ -344,15 +344,27 @@ try:
     output_file.parent.mkdir(exist_ok=True, parents=True)
 
     stream = ffmpeg.input(
-        os.path.join(processed_dir, "%04d.bmp"),
+        os.path.join(processed_dir, "%04d.tiff"),
         r=framerate,
         f="image2",
         s=whstr,
-        pix_fmt="yuva444p10le",
+        pix_fmt="yuva420p",
     )
+    stream = ffmpeg.output(stream, args.o, vcodec="prores_ks", **{"profile:v": "4"})
+
+    """
     stream = ffmpeg.output(
-        stream, args.o, vcodec="prores_ks", **{"profile:v": "4", "bits_per_mb": "5000"}
+        stream,
+        args.o,
+        vcodec="libvpx-vp9",
+        pix_fmt="yuva420p",
+        **{
+            "crf": "23",
+            "b:v": "0",
+            "auto-alt-ref": "0",
+        },
     )
+    """
     ffmpeg.run(stream)
 
 except KeyboardInterrupt:
@@ -362,3 +374,4 @@ finally:
     print("Removing temporary files...")
     rmtree(processed_dir, ignore_errors=True)
     rmtree(frames_dir, ignore_errors=True)
+    rmtree(smoothed_dir, ignore_errors=True)
