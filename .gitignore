@@ -3,3 +3,7 @@
 /frames
 /export
 *.mp4
+*.webm
+*.mov
+*.mkv
+__pycache__
