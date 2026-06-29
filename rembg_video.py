@@ -41,16 +41,10 @@ parser.add_argument(
     help="Temporal mask smoothing window size in frames (default: 3, 0 to disable)",
 )
 parser.add_argument(
-    "--read-ahead",
+    "--buffer-size",
     type=int,
     default=8,
-    help="Number of frames to read ahead into buffer (default: 8)",
-)
-parser.add_argument(
-    "--write-buffer",
-    type=int,
-    default=8,
-    help="Number of processed frames to buffer before writing (default: 8)",
+    help="Set maximum number of frames in buffer (default: 8)",
 )
 parser.add_argument(
     "--smooth-workers",
@@ -75,9 +69,9 @@ def is_oom_error(exc):
     )
 
 
-def image_to_png_bytes(image):
+def image_to_bytes(image):
     with io.BytesIO() as buffer:
-        image.save(buffer, format="PNG")
+        image.save(buffer, format="BMP")
         return buffer.getvalue()
 
 
@@ -99,7 +93,7 @@ def remove_with_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
                 Image.Resampling.LANCZOS,
             )
             with io.BytesIO() as buffer:
-                resized.save(buffer, format="PNG")
+                resized.save(buffer, format="BMP")
                 scaled_bytes = buffer.getvalue()
 
             scaled_output = remove(scaled_bytes, session=session)
@@ -107,11 +101,11 @@ def remove_with_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
                 scaled_output_bytes = bytes(scaled_output)
             elif isinstance(scaled_output, np.ndarray):
                 with io.BytesIO() as buffer:
-                    Image.fromarray(scaled_output).save(buffer, format="PNG")
+                    Image.fromarray(scaled_output).save(buffer, format="BMP")
                     scaled_output_bytes = buffer.getvalue()
             elif isinstance(scaled_output, Image.Image):
                 with io.BytesIO() as buffer:
-                    scaled_output.save(buffer, format="PNG")
+                    scaled_output.save(buffer, format="BMP")
                     scaled_output_bytes = buffer.getvalue()
             else:
                 raise RuntimeError(
@@ -126,7 +120,7 @@ def remove_with_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
 
             output_full = original.copy()
             output_full.putalpha(alpha)
-            return image_to_png_bytes(output_full)
+            return image_to_bytes(output_full)
 
         except Exception as exc:
             last_exc = exc
@@ -185,8 +179,8 @@ try:
         args.model, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
     )
 
-    read_queue = Queue(maxsize=args.read_ahead)
-    write_queue = Queue(maxsize=args.write_buffer)
+    read_queue = Queue(maxsize=args.buffer_size)
+    write_queue = Queue(maxsize=args.buffer_size)
     errors = []
     active_processors = [
         args.workers
@@ -280,7 +274,7 @@ try:
         # overwriting processed_dir in place. Overlapping windows mean a
         # frame can be a *read* dependency for several write_idx tasks;
         # writing in place risked one thread reading a file while another
-        # was mid-save on it (truncated/corrupt PNG -> shape errors).
+        # was mid-save on it (truncated/corrupt BMP -> shape errors).
         smoothed_dir = processed_dir + "_smoothed"
         if not os.path.isdir(smoothed_dir):
             os.mkdir(smoothed_dir)

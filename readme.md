@@ -24,7 +24,7 @@ pip install -r requirements(3.12).txt
 
 ## Usage:
 ```
-python .\rembg_video.py [-h] [--help] [-o] [--model] [--workers] [--smooth] [--read-ahead] [--write-buffer] input
+python .\rembg_video.py [-h] [--help] [-o] [--model] [--workers] [--smooth] [--smooth-workers] [--buffer-size] input
 ```
 <style>
 table {
@@ -52,9 +52,13 @@ th:nth-child(2) {
 <div style="display: flex; gap: 20px; align-items: flex-start;">
   <table>
     <tr><th colspan="2">Optional Arguments:</th></tr>
-    <tr><td>-o</td><td>Output Path</td></tr>
-    <tr><td>-h --help</td><td>Show Help</td></tr>
+    <tr><td>-o</td><td>Output path</td></tr>
+    <tr><td>-h --help</td><td>Show help</td></tr>
     <tr><td>--model</td><td>Choose model for rembg</td></tr>
+    <tr><td>--workers</td><td>Number of concurrent process workers</td></tr>
+    <tr><td>--smooth</td><td>Size of window for temporal smoothing</td></tr>
+    <tr><td>--smooth-workers</td><td>Number of CPU threads for temporal smoothing</td></tr>
+    <tr><td>--buffer-size</td><td>Set size of processing buffer</td></tr>
   </table>
 
   <table>
@@ -62,10 +66,3 @@ th:nth-child(2) {
     <tr><td>input</td><td>Input Video</td></tr>
   </table>
 </div>
-
-optional arguments:
-  -h, --help      show this help message and exit
-  -o              Set output path (Default: export/output.mov)
-  -
-  
-  Tip: [Alpha matting can be used to refine the results](https://github.com/danielgatis/rembg#advance-usage)
