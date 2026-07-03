@@ -62,10 +62,3 @@ th:nth-child(2) {
     <tr><td>input</td><td>Input Video</td></tr>
   </table>
 </div>
-
-## General Options:
-    -h, --help                      Print this help text and exit
-    --version                       Print program version and exit
-    -U, --update                    Update this program to the latest version
-    --no-update                     Do not check for updates (default)
-    --update-to [CHANNEL]@[TAG]     Upgrade/downgrade to a specific version.
