@@ -6,16 +6,10 @@ Based on project [rembg_from_video](https://github.com/seth-tribbey/rembg_from_v
 
 ## Installation:
 
-### For Newer Architecture (GeForce 1600+ Series)
-```bash
-python -m venv .venv
-pip install -r requirements.txt
-```
-
-### For Pascal Arhitecture (GeForce 1000 Series)
+Currently i've gotten rembg to work only with Python **3.12** because of onnxruntime's shenanigans X/
 ```bash
 python3.12 -m venv .venv
-pip install -r requirements(3.12).txt
+pip install -r requirements.txt
 ```
 > **Script for fixing the cudnn path on Linux:** <br>
 > export LD_LIBRARY_PATH=/path/to/kakisalmi/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
@@ -24,7 +18,7 @@ pip install -r requirements(3.12).txt
 
 ## Usage:
 ```
-python .\rembg_video.py [-h] [--help] [-o] [--model] [--workers] [--smooth] [--smooth-workers] [--buffer-size] input
+python .\rembg_video.py [-h] [--help] [-o] [--model] [--workers] [--smooth] [--smooth-workers] [--buffer-size] [--output-type] input
 ```
 <style>
 table {
@@ -52,13 +46,15 @@ th:nth-child(2) {
 <div style="display: flex; gap: 20px; align-items: flex-start;">
   <table>
     <tr><th colspan="2">Optional Arguments:</th></tr>
-    <tr><td>-o</td><td>Output path</td></tr>
+    <tr><td>-o</td><td>Output path </td></tr>
     <tr><td>-h --help</td><td>Show help</td></tr>
     <tr><td>--model</td><td>Choose model for rembg</td></tr>
     <tr><td>--workers</td><td>Number of concurrent process workers</td></tr>
     <tr><td>--smooth</td><td>Size of window for temporal smoothing</td></tr>
     <tr><td>--smooth-workers</td><td>Number of CPU threads for temporal smoothing</td></tr>
     <tr><td>--buffer-size</td><td>Set size of processing buffer</td></tr>
+    <tr><td>--output-type</td><td>Choose how video is exported 
+    <br>"complete" = Full Color .mov <br>"mask" = Only mask <br>"mask_seq" = Mask image sequence)
   </table>
 
   <table>
@@ -66,3 +62,10 @@ th:nth-child(2) {
     <tr><td>input</td><td>Input Video</td></tr>
   </table>
 </div>
+
+## General Options:
+    -h, --help                      Print this help text and exit
+    --version                       Print program version and exit
+    -U, --update                    Update this program to the latest version
+    --no-update                     Do not check for updates (default)
+    --update-to [CHANNEL]@[TAG]     Upgrade/downgrade to a specific version.
