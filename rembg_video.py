@@ -304,33 +304,30 @@ try:
 
     if args.output_type != "mask_seq":
         # Output video
-        output_file = pathlib.Path(args.o) / ("output.mov")
-        output_file.parent.mkdir(exist_ok=True, parents=True)
-
         stream = ffmpeg.input(
             os.path.join(processed_dir, "%04d.tiff"),
             r=framerate,
             f="image2",
             s=whstr,
-            pix_fmt="yuva420p",
         )
-        stream = ffmpeg.output(
-            stream, str(output_file), vcodec="prores_ks", **{"profile:v": "4"}
-        )
-
-        """
-        stream = ffmpeg.output(
-            stream,
-            output_file,
-            vcodec="libvpx-vp9",
-            pix_fmt="yuva420p",
-            **{
-                "crf": "23",
-                "b:v": "0",
-                "auto-alt-ref": "0",
-            },
-        )
-        """
+        if args.output_type == "mask":
+            output_file = pathlib.Path(args.o) / ("output.mp4")
+            output_file.parent.mkdir(exist_ok=True, parents=True)
+            stream = ffmpeg.output(
+                stream,
+                str(output_file),
+                vcodec="libx264",
+                pix_fmt="gray",
+                crf=0,
+                preset="veryslow",
+                tune="animation",
+            )
+        else:
+            output_file = pathlib.Path(args.o) / ("output.mov")
+            output_file.parent.mkdir(exist_ok=True, parents=True)
+            stream = ffmpeg.output(
+                stream, str(output_file), vcodec="prores_ks", **{"profile:v": "4"}
+            )
 
         ffmpeg.run(stream, overwrite_output=True)
 
