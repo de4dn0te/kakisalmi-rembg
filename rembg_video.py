@@ -6,7 +6,7 @@ import pathlib
 import threading
 import numpy as np
 from queue import Queue
-from shutil import rmtree
+from shutil import rmtree, move
 from PIL import Image
 from rembg import new_session, remove
 
@@ -19,14 +19,12 @@ parser = argparse.ArgumentParser(
     description="Applies rembg background removal to the frames of a video"
 )
 parser.add_argument("input", type=str, help="Input video")
-parser.add_argument(
-    "-o", type=str, default="export/output.mov", help="Define output path"
-)
+parser.add_argument("-o", type=str, default="export", help="Define output path")
 parser.add_argument(
     "--model",
     type=str,
     default="u2net_human_seg",
-    help="rembg model to use (default: birefnet-general-lite)",
+    help="rembg model to use (default: u2net_human_seg)",
 )
 parser.add_argument(
     "--workers",
@@ -52,6 +50,13 @@ parser.add_argument(
     default=os.cpu_count() or 4,
     help="Number of cpu threads to use for temporal mask smoothing (default: cpu count)",
 )
+parser.add_argument(
+    "--output-type",
+    type=str,
+    choices=["complete", "mask", "mask_seq"],
+    default="complete",
+    help="What way to output keyed video. (default: complete)",
+)
 args = parser.parse_args()
 
 
@@ -71,75 +76,30 @@ def is_oom_error(exc):
 
 def image_to_bytes(image):
     with io.BytesIO() as buffer:
-        image.save(buffer, format="BMP")
+        image.save(buffer, format="TIFF")
         return buffer.getvalue()
 
 
-def remove_with_fallback(image_bytes, session, scales=(1.0, 0.8, 0.6, 0.4)):
-    original = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-    width, height = original.size
-    last_exc = None
-
-    for scale in scales:
-        try:
-            if scale == 1.0:
-                return remove(image_bytes, session=session)
-
-            resized = original.resize(
-                (
-                    max(1, int(width * scale)),
-                    max(1, int(height * scale)),
-                ),
-                Image.Resampling.LANCZOS,
-            )
-            with io.BytesIO() as buffer:
-                resized.save(buffer, format="BMP")
-                scaled_bytes = buffer.getvalue()
-
-            scaled_output = remove(scaled_bytes, session=session)
-            if isinstance(scaled_output, (bytes, bytearray)):
-                scaled_output_bytes = bytes(scaled_output)
-            elif isinstance(scaled_output, np.ndarray):
-                with io.BytesIO() as buffer:
-                    Image.fromarray(scaled_output).save(buffer, format="BMP")
-                    scaled_output_bytes = buffer.getvalue()
-            elif isinstance(scaled_output, Image.Image):
-                with io.BytesIO() as buffer:
-                    scaled_output.save(buffer, format="BMP")
-                    scaled_output_bytes = buffer.getvalue()
+def remove_with_fallback(image_bytes, session):
+    try:
+        rembg_out = remove(image_bytes, session=session)
+        if args.output_type == "complete":
+            return rembg_out
+        elif args.output_type in ("mask", "mask_seq"):
+            if isinstance(rembg_out, (bytes, bytearray)):
+                mask_bytes = bytes(rembg_out)
             else:
-                raise RuntimeError(
-                    "Unexpected rembg remove() result type during mask fallback."
-                )
-            alpha = (
-                Image.open(io.BytesIO(scaled_output_bytes))
-                .convert("RGBA")
-                .getchannel("A")
-            )
-            alpha = alpha.resize((width, height), Image.Resampling.LANCZOS)
+                raise TypeError('mask_bytes is not of type "bytes"')
+            alpha = Image.open(io.BytesIO(mask_bytes)).convert("RGBA").getchannel("A")
+            return image_to_bytes(alpha)
+        else:
+            raise Exception("Unknown output type.")
 
-            output_full = original.copy()
-            output_full.putalpha(alpha)
-            return image_to_bytes(output_full)
-
-        except Exception as exc:
-            last_exc = exc
-            if not is_oom_error(exc):
-                raise
-            if scale == scales[-1]:
-                raise RuntimeError(
-                    "Insufficient GPU memory: background removal failed even after fallback downscales."
-                ) from exc
-            print(
-                f"OOM detected during removal at scale {scale:.2f}; retrying with lower-resolution mask...",
-                flush=True,
-            )
-
-    if last_exc is not None:
-        raise RuntimeError(
-            "Background removal failed unexpectedly during fallback."
-        ) from last_exc
-    raise RuntimeError("Background removal failed unexpectedly.")
+    except Exception as exc:
+        if is_oom_error(exc):
+            raise RuntimeError("Insufficient GPU memory!") from exc
+        else:
+            raise RuntimeError("Background removal failed unexpectedly.")
 
 
 # Extract video info
@@ -154,14 +114,18 @@ height = int(video_stream["height"])
 whstr = str(width) + "x" + str(height)
 framerate = video_stream["avg_frame_rate"]
 
+# Setup workspace folders
 frames_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "frames")
 processed_dir = os.path.join(str(pathlib.Path(__file__).parent.absolute()), "processed")
+smoothed_dir = processed_dir + "_smoothed"
+rmtree(frames_dir, ignore_errors=True)
+rmtree(processed_dir, ignore_errors=True)
+rmtree(smoothed_dir, ignore_errors=True)
 
 # Extract input video frames
-rmtree(frames_dir, ignore_errors=True)
 os.mkdir(frames_dir)
 stream = ffmpeg.input(args.input)
-stream = ffmpeg.output(stream, os.path.join(frames_dir, "%04d.bmp"))
+stream = ffmpeg.output(stream, os.path.join(frames_dir, "%04d.tiff"))
 ffmpeg.run(stream)
 
 _SENTINEL = object()
@@ -274,8 +238,7 @@ try:
         # overwriting processed_dir in place. Overlapping windows mean a
         # frame can be a *read* dependency for several write_idx tasks;
         # writing in place risked one thread reading a file while another
-        # was mid-save on it (truncated/corrupt BMP -> shape errors).
-        smoothed_dir = processed_dir + "_smoothed"
+        # was mid-save on it (truncated/corrupt img -> shape errors).
         if not os.path.isdir(smoothed_dir):
             os.mkdir(smoothed_dir)
 
@@ -339,21 +302,39 @@ try:
         rmtree(processed_dir)
         os.rename(smoothed_dir, processed_dir)
 
-    # Output video
-    output_file = pathlib.Path(args.o)
-    output_file.parent.mkdir(exist_ok=True, parents=True)
+    if args.output_type != "mask_seq":
+        # Output video
+        stream = ffmpeg.input(
+            os.path.join(processed_dir, "%04d.tiff"),
+            r=framerate,
+            f="image2",
+            s=whstr,
+        )
+        if args.output_type == "mask":
+            output_file = pathlib.Path(args.o) / ("output.mp4")
+            output_file.parent.mkdir(exist_ok=True, parents=True)
+            stream = ffmpeg.output(
+                stream,
+                str(output_file),
+                vcodec="libx264",
+                pix_fmt="gray",
+                crf=0,
+                preset="veryslow",
+                tune="animation",
+            )
+        else:
+            output_file = pathlib.Path(args.o) / ("output.mov")
+            output_file.parent.mkdir(exist_ok=True, parents=True)
+            stream = ffmpeg.output(
+                stream, str(output_file), vcodec="prores_ks", **{"profile:v": "4"}
+            )
 
-    stream = ffmpeg.input(
-        os.path.join(processed_dir, "%04d.bmp"),
-        r=framerate,
-        f="image2",
-        s=whstr,
-        pix_fmt="yuva444p10le",
-    )
-    stream = ffmpeg.output(
-        stream, args.o, vcodec="prores_ks", **{"profile:v": "4", "bits_per_mb": "5000"}
-    )
-    ffmpeg.run(stream)
+        ffmpeg.run(stream, overwrite_output=True)
+
+    else:
+        img_seq_out_folder = os.path.join(args.o, "output_img_seq")
+        rmtree(img_seq_out_folder, ignore_errors=True)
+        move(processed_dir, img_seq_out_folder)
 
 except KeyboardInterrupt:
     print("\nInterrupted by user")
@@ -362,3 +343,4 @@ finally:
     print("Removing temporary files...")
     rmtree(processed_dir, ignore_errors=True)
     rmtree(frames_dir, ignore_errors=True)
+    rmtree(smoothed_dir, ignore_errors=True)
